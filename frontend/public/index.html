@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Бронирование ресурса</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; }
+  label, select, input { display: block; margin: 8px 0; }
+  ul { padding-left: 20px; }
+  .error { color:red; }
+  .success { color: green; }
+</style>
+</head>
+<body>
+
+<h2>Календарная форма бронирования</h2>
+
+<label>Тип ресурса:
+  <select id="resourceTypeSelect">
+    <option value="">Все</option>
+    <option value="photographer">Фотографы</option>
+    <option value="conference_room">Конференц-залы</option>
+    <option value="equipment">Оборудование</option>
+  </select>
+</label>
+
+<label>Выберите ресурс:
+  <select id="resourceSelect"></select>
+</label>
+
+<label>Выберите дату:
+  <input type="date" id="dateInput" />
+</label>
+
+<h3>Занятость ресурса на выбранный день:</h3>
+<ul id="bookingList">Загрузка...</ul>
+
+<h3>Создать бронирование</h3>
+<form id="bookingForm">
+  <label>Время начала:
+    <input type="time" id="startTime" required />
+  </label>
+  <label>Время окончания:
+    <input type="time" id="endTime" required />
+  </label>
+  <button type="submit">Забронировать</button>
+</form>
+
+<p id="message"></p>
+
+<script>
+  const resourceTypeSelect = document.getElementById("resourceTypeSelect");
+  const resourceSelect = document.getElementById("resourceSelect");
+  const dateInput = document.getElementById("dateInput");
+  const bookingList = document.getElementById("bookingList");
+  const bookingForm = document.getElementById("bookingForm");
+  const message = document.getElementById("message");
+
+ 
+  dateInput.value = new Date().toISOString().slice(0, 10);
+
+  function loadResources() {
+    const type = resourceTypeSelect.value;
+    let url = "/resources";
+    if (type) url += `?type=${type}`;
+
+    fetch(url)
+      .then(res => {
+        if (!res.ok) throw new Error("Ошибка загрузки ресурсов");
+        return res.json();
+      })
+      .then(data => {
+        resourceSelect.innerHTML = "";
+        if (data.length === 0) {
+          resourceSelect.innerHTML = "<option disabled>Нет ресурсов</option>";
+          bookingList.textContent = "Нет ресурсов для выбранного типа.";
+          return;
+        }
+        data.forEach(r => {
+          const option = document.createElement("option");
+          option.value = r.id;
+          option.textContent = r.name;
+          resourceSelect.appendChild(option);
+        });
+        loadSchedule();
+      })
+      .catch(() => {
+        bookingList.textContent = "Ошибка загрузки ресурсов";
+      });
+  }
+
+
+  function loadSchedule() {
+    message.textContent = "";
+    bookingList.textContent = "Загрузка...";
+    const resourceId = resourceSelect.value;
+    const date = dateInput.value;
+    if (!resourceId) {
+      bookingList.textContent = "Выберите ресурс.";
+      return;
+    }
+
+    fetch(`/schedule?resource_id=${resourceId}&date=${date}`)
+      .then(res => {
+        if (!res.ok) throw new Error("Ошибка загрузки расписания");
+        return res.json();
+      })
+      .then(bookings => {
+        if (!bookings.length) {
+          bookingList.textContent = "Нет бронирований.";
+          return;
+        }
+        bookingList.innerHTML = "";
+        bookings.forEach(b => {
+          const li = document.createElement("li");
+          const start = new Date(b.start_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const end = new Date(b.end_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          li.textContent = `${start} — ${end}`;
+          bookingList.appendChild(li);
+        });
+      })
+      .catch(() => {
+        bookingList.textContent = "Ошибка загрузки бронирований";
+      });
+  }
+
+ 
+  bookingForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    message.textContent = "";
+    message.className = "";
+
+    const startTime = document.getElementById("startTime").value;
+    const endTime = document.getElementById("endTime").value;
+    const resourceId = resourceSelect.value;
+    const date = dateInput.value;
+
+    if (!startTime || !endTime) {
+      message.textContent = "Введите время начала и окончания";
+      message.className = "error";
+      return;
+    }
+    if (startTime >= endTime) {
+      message.textContent = "Время начала должно быть раньше времени окончания";
+      message.className = "error";
+      return;
+    }
+    if (!resourceId) {
+      message.textContent = "Выберите ресурс";
+      message.className = "error";
+      return;
+    }
+
+    const start_datetime = new Date(`${date}T${startTime}`).toISOString();
+    const end_datetime = new Date(`${date}T${endTime}`).toISOString();
+
+    fetch("/bookings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: 1, 
+        resource_id: Number(resourceId),
+        start_datetime,
+        end_datetime,
+      }),
+    })
+    .then(res => {
+      if (res.ok) return res.json();
+      return res.json().then(data => { throw new Error(data.message || "Ошибка бронирования"); });
+    })
+    .then(() => {
+      message.textContent = "Бронирование успешно создано!";
+      message.className = "success";
+      bookingForm.reset();
+      loadSchedule();
+    })
+    .catch(err => {
+      message.textContent = err.message;
+      message.className = "error";
+    });
+  });
+
+  
+  resourceTypeSelect.addEventListener("change", loadResources);
+  resourceSelect.addEventListener("change", loadSchedule);
+  dateInput.addEventListener("change", loadSchedule);
+
+  loadResources();
+</script>
+
+</body>
+</html>
