@@ -1,15 +1,17 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8" />
-<title>Бронирование ресурса</title>
-<style>
-  body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; }
-  label, select, input { display: block; margin: 8px 0; }
-  ul { padding-left: 20px; }
-  .error { color:red; }
-  .success { color: green; }
-</style>
+  <meta charset="UTF-8" />
+  <title>Бронирование ресурса</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; }
+    label, select, input, button { display: block; margin: 8px 0; }
+    ul { padding-left: 20px; }
+    .error { color: red; }
+    .success { color: green; }
+    #deleteResourceBtn { margin-top: 10px; background-color: #e74c3c; color: white; border: none; padding: 8px 12px; cursor: pointer; }
+    #deleteResourceBtn:hover { background-color: #c0392b; }
+  </style>
 </head>
 <body>
 
@@ -27,6 +29,19 @@
 <label>Выберите ресурс:
   <select id="resourceSelect"></select>
 </label>
+<button id="deleteResourceBtn" title="Удалить выбранный ресурс">Удалить ресурс</button>
+
+<!-- Форма редактирования ресурса (без manager_user_id) -->
+<h3>Редактировать ресурс</h3>
+<form id="editResourceForm">
+  <label>Название:
+    <input type="text" id="editResourceName" required />
+  </label>
+  <label>Описание:
+    <input type="text" id="editResourceDescription" />
+  </label>
+  <button type="submit">Обновить ресурс</button>
+</form>
 
 <label>Выберите дату:
   <input type="date" id="dateInput" />
@@ -43,12 +58,34 @@
   <label>Время окончания:
     <input type="time" id="endTime" required />
   </label>
+  <label>ID менеджера:
+    <input type="number" id="newBookingManagerId" required />
+  </label>
   <button type="submit">Забронировать</button>
+</form>
+
+<h3>Редактировать бронирование</h3>
+<label>Выберите бронирование:
+  <select id="bookingSelect"></select>
+</label>
+<form id="editBookingForm">
+  <label>Время начала:
+    <input type="time" id="editStartTime" required />
+  </label>
+  <label>Время окончания:
+    <input type="time" id="editEndTime" required />
+  </label>
+  <label>ID менеджера:
+    <input type="number" id="editBookingManagerId" />
+  </label>
+  <button type="submit">Обновить бронирование</button>
 </form>
 
 <p id="message"></p>
 
 <script>
+  const TOKEN = 1; // замените на реальный токен
+
   const resourceTypeSelect = document.getElementById("resourceTypeSelect");
   const resourceSelect = document.getElementById("resourceSelect");
   const dateInput = document.getElementById("dateInput");
@@ -56,24 +93,45 @@
   const bookingForm = document.getElementById("bookingForm");
   const message = document.getElementById("message");
 
- 
+  const bookingSelect = document.getElementById("bookingSelect");
+  const editStartTime = document.getElementById("editStartTime");
+  const editEndTime = document.getElementById("editEndTime");
+  const editBookingManagerId = document.getElementById("editBookingManagerId");
+  const editBookingForm = document.getElementById("editBookingForm");
+
+  const deleteResourceBtn = document.getElementById("deleteResourceBtn");
+  const newBookingManagerId = document.getElementById("newBookingManagerId");
+
+  // Элементы для редактирования ресурса
+  const editResourceForm = document.getElementById('editResourceForm');
+  const editResourceName = document.getElementById('editResourceName');
+  const editResourceDescription = document.getElementById('editResourceDescription');
+
   dateInput.value = new Date().toISOString().slice(0, 10);
+
+  let currentResources = [];
+  let currentBookings = [];
 
   function loadResources() {
     const type = resourceTypeSelect.value;
     let url = "/resources";
     if (type) url += `?type=${type}`;
 
-    fetch(url)
+    fetch(url, {
+      headers: { "Authorization": `Bearer ${TOKEN}` }
+    })
       .then(res => {
         if (!res.ok) throw new Error("Ошибка загрузки ресурсов");
         return res.json();
       })
       .then(data => {
+        currentResources = data;
         resourceSelect.innerHTML = "";
         if (data.length === 0) {
           resourceSelect.innerHTML = "<option disabled>Нет ресурсов</option>";
           bookingList.textContent = "Нет ресурсов для выбранного типа.";
+          bookingSelect.innerHTML = "";
+          clearEditResourceForm();
           return;
         }
         data.forEach(r => {
@@ -82,17 +140,50 @@
           option.textContent = r.name;
           resourceSelect.appendChild(option);
         });
+        // Заполняем форму редактирования ресурса первым элементом
+        fillEditResourceForm(currentResources[0]);
         loadSchedule();
       })
       .catch(() => {
         bookingList.textContent = "Ошибка загрузки ресурсов";
+        bookingSelect.innerHTML = "";
+        clearEditResourceForm();
       });
   }
 
+  // Заполняем форму редактирования ресурса
+  function fillEditResourceForm(resource) {
+    if (!resource) {
+      clearEditResourceForm();
+      return;
+    }
+    editResourceName.value = resource.name || "";
+    editResourceDescription.value = resource.description || "";
+  }
+
+  function clearEditResourceForm() {
+    editResourceName.value = "";
+    editResourceDescription.value = "";
+  }
+
+  // Обновляем форму редактирования ресурса при смене выбора ресурса
+  resourceSelect.addEventListener('change', () => {
+    const resourceId = resourceSelect.value;
+    if (!resourceId) {
+      clearEditResourceForm();
+      bookingList.textContent = "Выберите ресурс.";
+      bookingSelect.innerHTML = "";
+      return;
+    }
+    const resource = currentResources.find(r => r.id == resourceId);
+    fillEditResourceForm(resource);
+    loadSchedule();
+  });
 
   function loadSchedule() {
     message.textContent = "";
     bookingList.textContent = "Загрузка...";
+    bookingSelect.innerHTML = "";
     const resourceId = resourceSelect.value;
     const date = dateInput.value;
     if (!resourceId) {
@@ -100,31 +191,75 @@
       return;
     }
 
-    fetch(`/schedule?resource_id=${resourceId}&date=${date}`)
+    fetch(`/schedule?resource_id=${resourceId}&date=${date}`, {
+      headers: { "Authorization": `Bearer ${TOKEN}` }
+    })
       .then(res => {
         if (!res.ok) throw new Error("Ошибка загрузки расписания");
         return res.json();
       })
       .then(bookings => {
+        currentBookings = bookings;
         if (!bookings.length) {
           bookingList.textContent = "Нет бронирований.";
+          bookingSelect.innerHTML = "<option disabled>Нет бронирований</option>";
+          clearEditBookingForm();
           return;
         }
         bookingList.innerHTML = "";
+        bookingSelect.innerHTML = "";
         bookings.forEach(b => {
           const li = document.createElement("li");
           const start = new Date(b.start_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           const end = new Date(b.end_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           li.textContent = `${start} — ${end}`;
           bookingList.appendChild(li);
+
+          const option = document.createElement("option");
+          option.value = b.id;
+          option.textContent = `${start} — ${end}`;
+          bookingSelect.appendChild(option);
         });
+
+        fillEditBookingForm(bookings[0]);
       })
       .catch(() => {
         bookingList.textContent = "Ошибка загрузки бронирований";
+        bookingSelect.innerHTML = "";
+        clearEditBookingForm();
       });
   }
 
- 
+  function fillEditBookingForm(booking) {
+    if (!booking) {
+      clearEditBookingForm();
+      return;
+    }
+    const startDate = new Date(booking.start_datetime);
+    const endDate = new Date(booking.end_datetime);
+
+    editStartTime.value = startDate.toISOString().slice(11,16);
+    editEndTime.value = endDate.toISOString().slice(11,16);
+    editBookingManagerId.value = booking.manager_user_id || "";
+  }
+
+  function clearEditBookingForm() {
+    editStartTime.value = "";
+    editEndTime.value = "";
+    editBookingManagerId.value = "";
+  }
+
+  bookingSelect.addEventListener("change", () => {
+    const selectedId = bookingSelect.value;
+    if (!selectedId) {
+      clearEditBookingForm();
+      return;
+    }
+
+    const booking = currentBookings.find(b => b.id == selectedId);
+    fillEditBookingForm(booking);
+  });
+
   bookingForm.addEventListener("submit", (e) => {
     e.preventDefault();
     message.textContent = "";
@@ -134,6 +269,7 @@
     const endTime = document.getElementById("endTime").value;
     const resourceId = resourceSelect.value;
     const date = dateInput.value;
+    const managerId = newBookingManagerId.value;
 
     if (!startTime || !endTime) {
       message.textContent = "Введите время начала и окончания";
@@ -150,18 +286,27 @@
       message.className = "error";
       return;
     }
+    if (!managerId) {
+      message.textContent = "Укажите ID менеджера";
+      message.className = "error";
+      return;
+    }
 
     const start_datetime = new Date(`${date}T${startTime}`).toISOString();
     const end_datetime = new Date(`${date}T${endTime}`).toISOString();
 
     fetch("/bookings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TOKEN}`
+      },
       body: JSON.stringify({
-        user_id: 1, 
+        user_id: 1,
         resource_id: Number(resourceId),
         start_datetime,
         end_datetime,
+        manager_user_id: Number(managerId)
       }),
     })
     .then(res => {
@@ -180,12 +325,155 @@
     });
   });
 
-  
-  resourceTypeSelect.addEventListener("change", loadResources);
-  resourceSelect.addEventListener("change", loadSchedule);
-  dateInput.addEventListener("change", loadSchedule);
+  editBookingForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    message.textContent = "";
+    message.className = "";
 
+    const bookingId = bookingSelect.value;
+    if (!bookingId) {
+      message.textContent = "Выберите бронирование для редактирования";
+      message.className = "error";
+      return;
+    }
+
+    const startTime = editStartTime.value;
+    const endTime = editEndTime.value;
+    const managerId = editBookingManagerId.value;
+
+    if (!startTime || !endTime) {
+      message.textContent = "Введите время начала и окончания";
+      message.className = "error";
+      return;
+    }
+    if (startTime >= endTime) {
+      message.textContent = "Время начала должно быть раньше времени окончания";
+      message.className = "error";
+      return;
+    }
+
+    const date = dateInput.value;
+    const start_datetime = new Date(`${date}T${startTime}`).toISOString();
+    const end_datetime = new Date(`${date}T${endTime}`).toISOString();
+
+    const bodyData = {
+      start_datetime,
+      end_datetime,
+    };
+
+    if (managerId) {
+      bodyData.manager_user_id = Number(managerId);
+    }
+
+    fetch(`/bookings/${bookingId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TOKEN}`
+      },
+      body: JSON.stringify(bodyData),
+    })
+    .then(res => {
+      if (!res.ok) return res.json().then(data => { throw new Error(data.message || "Ошибка обновления бронирования"); });
+      return res.json();
+    })
+    .then(() => {
+      message.textContent = "Бронирование обновлено";
+      message.className = "success";
+      loadSchedule();
+    })
+    .catch(err => {
+      message.textContent = err.message;
+      message.className = "error";
+    });
+  });
+
+  deleteResourceBtn.addEventListener("click", () => {
+    const resourceId = resourceSelect.value;
+    if (!resourceId) {
+      message.textContent = "Выберите ресурс для удаления";
+      message.className = "error";
+      return;
+    }
+    if (!confirm("Вы уверены, что хотите удалить выбранный ресурс? Это действие необратимо.")) {
+      return;
+    }
+
+    fetch(`/resources/${resourceId}`, {
+      method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${TOKEN}`
+      }
+    })
+    .then(res => {
+      if (!res.ok) return res.json().then(data => { throw new Error(data.message || "Ошибка удаления ресурса"); });
+      return res.json();
+    })
+    .then(() => {
+      message.textContent = "Ресурс успешно удалён";
+      message.className = "success";
+      loadResources();
+      bookingList.textContent = "";
+      bookingSelect.innerHTML = "";
+      clearEditBookingForm();
+      clearEditResourceForm();
+    })
+    .catch(err => {
+      message.textContent = err.message;
+      message.className = "error";
+    });
+  });
+
+  // Обработка отправки формы редактирования ресурса
+  editResourceForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    message.textContent = "";
+    message.className = "";
+
+    const resourceId = resourceSelect.value;
+    if (!resourceId) {
+      message.textContent = 'Выберите ресурс для редактирования';
+      message.className = 'error';
+      return;
+    }
+
+    try {
+      const res = await fetch(`/resources/${resourceId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${TOKEN}`
+        },
+        body: JSON.stringify({
+          name: editResourceName.value,
+          description: editResourceDescription.value
+          // manager_user_id НЕ отправляем, чтобы не менять менеджера
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || 'Ошибка обновления ресурса');
+      }
+      message.textContent = 'Ресурс успешно обновлен';
+      message.className = 'success';
+      loadResources(); // обновим список и форму
+    } catch (err) {
+      message.textContent = err.message;
+      message.className = 'error';
+    }
+  });
+
+  resourceTypeSelect.addEventListener("change", () => {
+    loadResources();
+  });
+
+  dateInput.addEventListener("change", () => {
+    loadSchedule();
+  });
+
+  // Загрузка при старте
   loadResources();
+
 </script>
 
 </body>
